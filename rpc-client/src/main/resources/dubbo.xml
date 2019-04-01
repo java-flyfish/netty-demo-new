@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dubbo>
+    <address id="address" value="localhost"/>
+    <address id="port" value="8888"/>
+</dubbo>
+
