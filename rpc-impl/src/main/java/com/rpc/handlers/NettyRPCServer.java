@@ -8,16 +8,32 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.GenericFutureListener;
+import org.I0Itec.zkclient.ZkClient;
+import org.springframework.beans.BeansException;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ContextRefreshedEvent;
 
-import javax.annotation.PostConstruct;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
-@Component
-public class NettyRPCServer {
+public class NettyRPCServer implements ApplicationListener<ContextRefreshedEvent>,ApplicationContextAware{
+
     private Integer port = null;
-    @Autowired
-    private InvokeHandler invokeHandler;
+    private ZkClient zkClient = null;
+
+    public NettyRPCServer(){}
+
+    public NettyRPCServer(ZkClient zkClient,Integer port){
+        this.port = port;
+        this.zkClient = zkClient;
+    }
+
+    private ApplicationContext applicationContext;
+
     public void run(){
         EventLoopGroup bossGroup = new NioEventLoopGroup();
         EventLoopGroup workGroup = new NioEventLoopGroup();
@@ -38,23 +54,80 @@ public class NettyRPCServer {
                             pipeline.addLast("decoder",new ObjectDecoder(Integer.MAX_VALUE,
                                     ClassResolvers.cacheDisabled(null)));
                             //服务器端业务处理类
-                            pipeline.addLast(invokeHandler);
+                            pipeline.addLast(new InvokeHandler(applicationContext));
                         }
                     });
-            ChannelFuture future = serverBootstrap.bind(port).sync();
+            ChannelFuture future = serverBootstrap.bind(port).addListener(new GenericFutureListener<Future<? super Void>>() {
+                @Override
+                public void operationComplete(Future<? super Void> future) throws Exception {
+
+                    //注册服务
+                    regiestServer();
+                    System.out.println("绑定端口结束！");
+                }
+            });
             System.out.println("......Server is ready......");
-            future.channel().closeFuture().sync();
+            future.channel().closeFuture().addListener(new GenericFutureListener<Future<? super Void>>() {
+                @Override
+                public void operationComplete(Future<? super Void> future) throws Exception {
+                    System.out.println("处理结果结束！");
+                }
+            });
         }catch (Exception e){
             bossGroup.shutdownGracefully();
             workGroup.shutdownGracefully();
         }
     }
 
-    @PostConstruct
-    public void init(){
+    @Override
+    public void onApplicationEvent(ContextRefreshedEvent contextRefreshedEvent) {
         if (port == null){
             port = 8888;
         }
         this.run();
+    }
+
+    public void destroy() {
+        InetAddress address = null;
+        try {
+            address = InetAddress.getLocalHost();
+        } catch (UnknownHostException e) {
+            System.out.println("获取当前服务器地址失败！");
+            e.printStackTrace();
+        }
+        String regiestAddress = address.getHostAddress() + ":" + port;
+        if (zkClient.exists("/serverList/" + regiestAddress)){
+            zkClient.delete("/serverList/" + regiestAddress);
+        }
+    }
+
+    private void regiestServer(){
+        //在zk中注册本机地址
+        if (zkClient == null){
+            zkClient = new ZkClient("localhost:2181",10000);
+        }
+
+        if (!zkClient.exists("/serverList")){
+            //节点不存在，则创建节点
+            zkClient.createPersistent("/serverList");
+        }
+        InetAddress address = null;
+        try {
+            address = InetAddress.getLocalHost();
+        } catch (UnknownHostException e) {
+            System.out.println("获取当前服务器地址失败！");
+            e.printStackTrace();
+        }
+        String regiestAddress = address.getHostAddress() + ":" + port;
+        //创建子节点
+        if (!zkClient.exists("/serverList/" + regiestAddress)){
+            //节点不存在，则创建节点
+            zkClient.createEphemeral("/serverList/" + regiestAddress);
+        }
+    }
+
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        this.applicationContext = applicationContext;
     }
 }

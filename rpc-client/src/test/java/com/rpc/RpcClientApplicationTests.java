@@ -16,8 +16,8 @@ public class RpcClientApplicationTests {
 
 	@Test
 	public void contextLoads() {
-		NettyRPCProxy proxy = new NettyRPCProxy();
-		HelloNetty helloNetty=(HelloNetty) proxy.create(HelloNetty.class);
+		NettyRPCProxy<HelloNetty> proxy = new NettyRPCProxy();
+		HelloNetty helloNetty= proxy.getBean(HelloNetty.class);
 		System.out.println(helloNetty.hello());
 		//第 2 次远程调用
 		HelloRPC helloRPC = (HelloRPC) proxy.create(HelloRPC.class);

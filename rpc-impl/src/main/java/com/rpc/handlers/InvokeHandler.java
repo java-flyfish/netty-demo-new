@@ -1,13 +1,12 @@
 package com.rpc.handlers;
 
 import com.rpc.bean.ClassInfo;
+import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import lombok.Data;
 import org.reflections.Reflections;
-import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.ApplicationContextAware;
-import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.util.Set;
@@ -15,19 +14,23 @@ import java.util.Set;
 /**
  * created by weiyang
  */
-@Component
-public class InvokeHandler extends ChannelInboundHandlerAdapter implements ApplicationContextAware {
+@ChannelHandler.Sharable
+@Data
+public class InvokeHandler extends ChannelInboundHandlerAdapter{
     private ApplicationContext applicationContext;
+
+    public InvokeHandler (ApplicationContext applicationContext){
+        this.applicationContext = applicationContext;
+    }
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         //直接转换传过来的数据
         ClassInfo classInfo = (ClassInfo)msg;
 //        String className = getImplClassName(classInfo);
-        //通过反射调用目标方法
         Class clzz = Class.forName(classInfo.getClassName());
         Object bean = applicationContext.getBean(clzz);
-        Method method = clzz.getClass().getMethod(classInfo.getMethodName());
-        Object result = method.invoke(bean.getClass(), classInfo.getObjects());
+        Method method = bean.getClass().getMethod(classInfo.getMethodName(),classInfo.getTypes());
+        Object result = method.invoke(bean, classInfo.getObjects());
         //写出数据到通道中
         ctx.writeAndFlush(result);
     }
@@ -60,8 +63,5 @@ public class InvokeHandler extends ChannelInboundHandlerAdapter implements Appli
         }
     }
 
-    @Override
-    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
-        this.applicationContext = applicationContext;
-    }
+
 }
