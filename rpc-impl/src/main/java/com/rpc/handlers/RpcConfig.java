@@ -15,9 +15,10 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RpcConfig {
 
-    String CONNECT_ADDR = "10.0.4.165:2181";
-    /** session超时时间 */
-    int SESSION_OUTTIME = 10000;//ms
+    //地址
+    String CONNECT_ADDR = "192.168.1.9:2181";
+    //session超时时间 ms
+    Integer SESSION_OUTTIME = 10000;
 
     @Bean
     public ZkClient zkClient(){

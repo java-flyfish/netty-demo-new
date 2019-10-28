@@ -15,50 +15,76 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
+import org.I0Itec.zkclient.IZkChildListener;
 import org.I0Itec.zkclient.ZkClient;
 import org.I0Itec.zkclient.ZkConnection;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ContextRefreshedEvent;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class NettyRPCProxy<T> {
+public class NettyRPCProxy<T> implements ApplicationListener<ContextRefreshedEvent> {
     private ConfigurationFactory factory = new ConfigurationFactory();
 
+    String zkRoot = "/serverList";
+    Class aClass;
     private DubboConfiguration configuration;
     private ZkClient zkClient = null;
-    String CONNECT_ADDR = "10.0.4.165:2181";
-    /** session超时时间 */
-    int SESSION_OUTTIME = 10000;//ms
+    String CONNECT_ADDR = "192.168.1.9:2181";
+    //session超时时间 ms
+    int SESSION_OUTTIME = 10000;
 
-    Map<String,Map<String,Object>> beanListMap = new ConcurrentHashMap<>();
+    Map<String,T> beanListMap = new ConcurrentHashMap<>();
 
-    public NettyRPCProxy(){
+    public NettyRPCProxy(Class aClass){
+        this.aClass = aClass;
 //        configuration = factory.analysisXML(DubboConfiguration.class);
         this.zkClient = new ZkClient(new ZkConnection(CONNECT_ADDR), SESSION_OUTTIME);
         System.out.println("zkClient初始化完成。。。");
     }
 
-    public T getBean(Class target) {
-        Map<String,Object> beans = beanListMap.get(target.getName());
-        T t = null;
-        if (beans == null || beans.isEmpty()){
-            beans = new ConcurrentHashMap<>();
-            t = (T)this.create(target);
-            beans.put(t);
-            beanListMap.put(target.getName(),beans);
-        }else {
-            t = (T)beans.get(0);
+    //对外提供的获取bean的方法
+    public T getBean() {
+        if (beanListMap.isEmpty()){
+            System.out.println("未找到服务！");
+            return null;
         }
+        Set<Map.Entry<String, T>> beans = beanListMap.entrySet();
+        Random random = new Random();
+        int index = random.nextInt(beans.size() - 1);
+        List<Object> beanList = Arrays.asList(beans.toArray());
+        T t = (T)beanList.get(index);
         return t;
     }
 
+    //监听节点变化
+    public void serverNodeChangeEvent(){
+        zkClient.subscribeChildChanges(zkRoot, new IZkChildListener() {
+			@Override
+			public void handleChildChange(String s, List<String> list) throws Exception {
+				System.out.println("参数s：" + s);
+				System.out.println("参数list：" + list);
+			}
+		});
+    }
+
+    //初始化时创建bean
+    public void createBean(){
+        List<String> address = zkClient.getChildren(zkRoot);
+        for (String addr : address){
+            Object bean = this.doCreate(aClass, addr);
+            if (bean != null){
+                beanListMap.put(addr,(T)bean);
+            }
+        }
+    }
+
     //根据接口创建代理对象
-    public Object create(Class target,String serverAddr){
+    public Object doCreate(Class target,String serverAddr){
         return Proxy.newProxyInstance(target.getClassLoader(), new Class[]{target}, new InvocationHandler() {
             @Override
             public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -89,15 +115,14 @@ public class NettyRPCProxy<T> {
                                     pipeline.addLast("handler", resultHandler);
                                 }
                             });
-                    List<String> address = zkClient.getChildren("/serverList");
-                    if (!address.isEmpty()){
-                        String addr = address.get(0).split(":")[0];
-                        Integer port = Integer.valueOf(address.get(0).split(":")[1]);
+
+                    String addr = serverAddr.split(":")[0];
+                    Integer port = Integer.valueOf(serverAddr.split(":")[1]);
 //                        ChannelFuture future = b.connect(configuration.getAddress(), Integer.valueOf(configuration.getPort())).sync();
-                        ChannelFuture future = b.connect(addr, port).sync();
-                        future.channel().writeAndFlush(classInfo).sync();
-                        future.channel().closeFuture().sync();
-                    }
+                    ChannelFuture future = b.connect(addr, port).sync();
+                    future.channel().writeAndFlush(classInfo).sync();
+                    future.channel().closeFuture().sync();
+
 
                 }finally {
                     group.shutdownGracefully();
@@ -105,5 +130,11 @@ public class NettyRPCProxy<T> {
                 return resultHandler.getResponse();
             }
         });
+    }
+
+    @Override
+    public void onApplicationEvent(ContextRefreshedEvent contextRefreshedEvent) {
+        this.serverNodeChangeEvent();
+        this.createBean();
     }
 }
